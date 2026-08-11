@@ -42,6 +42,7 @@ python app.py --open-browser
 导出：
 
 - 队列 CSV：`/api/export/queue.csv`
+- 队列 TXT：`/api/export/queue.txt`，格式为 `1. 名字 备注`
 - 舰队名单 CSV：`/api/export/guards.csv`
 
 直播展示页：
@@ -49,7 +50,7 @@ python app.py --open-browser
 - Overlay：`http://127.0.0.1:8765/overlay`
 - 自定义标题：`http://127.0.0.1:8765/overlay?title=街霸排队`
 
-这个页面适合放进 OBS 或直播姬的浏览器源，只显示排队名单，默认格式为 `1. 名字`。overlay 每行右侧可以填写备注/比分，也可以确认后从直播展示页隐藏；后台完整队列和 CSV 导出仍会保留原始序号与备注。后台的“恢复展示”可以把已隐藏项重新显示到 overlay。
+这个页面适合放进 OBS 或直播姬的浏览器源，只显示排队名单，默认格式为 `1. 名字`。overlay 每行右侧可以填写备注/比分，也可以确认后从直播展示页隐藏；后台完整队列、CSV 导出和 TXT 导出仍会保留原始序号与备注。后台的“恢复展示”可以把已隐藏项重新显示到 overlay。
 
 数据会保存在 `danmu_queue.db`。如果你选择“曾经上过舰”，应用会自动记录监听期间看到的 `GUARD_BUY` 上舰事件，也会把弹幕里带舰队等级的用户沉淀进舰队名单。应用启动之前的历史舰队成员，可以在 UI 里手动导入，格式支持：
 

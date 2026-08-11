@@ -245,6 +245,29 @@ class DanmuQueueTests(unittest.TestCase):
             self.assertEqual(store.reset_overlay_queue(), 1)
             self.assertEqual(len(store.list_overlay_queue()), 1)
 
+    def test_exports_queue_txt_with_optional_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = QueueStore(Path(tmpdir) / "queue.db")
+            settings = store.update_settings(
+                {
+                    "keyword": "排队",
+                    "eligibility_mode": "all",
+                    "allow_repeat": False,
+                }
+            )
+
+            self.assertEqual(
+                store.enqueue_if_allowed(DanmuMessage(123456, "测试用户", "排队", None, 0), settings),
+                (True, 1, "queued"),
+            )
+            self.assertTrue(store.update_queue_note(1, "3-2"))
+            self.assertEqual(
+                store.enqueue_if_allowed(DanmuMessage(789, "第二用户", "排队", None, 0), settings),
+                (True, 2, "queued"),
+            )
+
+            self.assertEqual(store.export_queue_txt(), "1. 测试用户 3-2\n2. 第二用户\n")
+
     def test_store_can_require_tidu_or_above(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = QueueStore(Path(tmpdir) / "queue.db")

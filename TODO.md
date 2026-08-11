@@ -29,8 +29,8 @@
 
 ## Export
 
-- Support TXT export.
-- TXT export format should include queue number, name, and optional note:
+- [x] Support TXT export.
+- [x] TXT export format should include queue number, name, and optional note:
 
 ```text
 1. Name 3-2

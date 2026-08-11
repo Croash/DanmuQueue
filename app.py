@@ -536,6 +536,17 @@ class QueueStore:
             writer.writerow({key: row.get(key, "") for key in fieldnames})
         return output.getvalue()
 
+    def export_queue_txt(self) -> str:
+        lines = []
+        for row in self.list_queue(limit=100000):
+            name = str(row.get("uname") or f"UID {row.get('uid') or '未知'}").strip()
+            note = str(row.get("note") or "").strip()
+            line = f"{row.get('queue_no')}. {name}"
+            if note:
+                line = f"{line} {note}"
+            lines.append(line)
+        return "\n".join(lines) + ("\n" if lines else "")
+
     def export_guards_csv(self) -> str:
         rows = self.list_guards(limit=100000)
         output = io.StringIO()
@@ -924,6 +935,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         if parsed.path in {"/api/export/queue.csv", "/api/export/guards.csv"}:
             self.send_head_response("text/csv; charset=utf-8")
             return
+        if parsed.path == "/api/export/queue.txt":
+            self.send_head_response("text/plain; charset=utf-8")
+            return
         self.serve_static(parsed.path, head_only=True)
 
     def do_GET(self) -> None:
@@ -933,6 +947,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/export/queue.csv":
             self.send_csv("danmu_queue.csv", self.app.store.export_queue_csv())
+            return
+        if parsed.path == "/api/export/queue.txt":
+            self.send_text("danmu_queue.txt", self.app.store.export_queue_txt())
             return
         if parsed.path == "/api/export/guards.csv":
             self.send_csv("danmu_guard_members.csv", self.app.store.export_guards_csv())
@@ -1014,6 +1031,15 @@ class ApiHandler(BaseHTTPRequestHandler):
         raw = text.encode("utf-8-sig")
         self.send_response(200)
         self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def send_text(self, filename: str, text: str) -> None:
+        raw = text.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()

@@ -198,6 +198,11 @@ button:disabled {
   gap: 8px;
 }
 
+.button-row + .button-row,
+.button-row + button {
+  margin-top: 8px;
+}
+
 .checkline {
   display: flex;
   align-items: center;
