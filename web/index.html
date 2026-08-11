@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DanmuQueue</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>DanmuQueue</h1>
+        <div class="subline" id="roomLine">未连接</div>
+      </div>
+      <div class="status" id="statusPill">
+        <span class="status-dot"></span>
+        <span id="statusText">未连接</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="settings-panel">
+        <section class="section">
+          <h2>连接</h2>
+          <label>
+            <span>直播间号</span>
+            <input id="roomInput" inputmode="numeric" autocomplete="off" placeholder="例如 6" />
+          </label>
+          <label>
+            <span>关键词</span>
+            <input id="keywordInput" autocomplete="off" />
+          </label>
+          <label>
+            <span>Cookie</span>
+            <input id="cookieInput" type="password" autocomplete="off" placeholder="可选，不保存" />
+          </label>
+          <div class="button-row">
+            <button id="connectBtn" class="primary">连接</button>
+            <button id="disconnectBtn">断开</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <h2>资格</h2>
+          <label>
+            <span>资格来源</span>
+            <select id="modeSelect">
+              <option value="historical">曾经上过舰</option>
+              <option value="current">当前在舰</option>
+              <option value="all">不限制</option>
+            </select>
+          </label>
+          <label>
+            <span>最低等级</span>
+            <select id="guardSelect">
+              <option value="3">舰长及以上</option>
+              <option value="2">提督及以上</option>
+              <option value="1">总督</option>
+            </select>
+          </label>
+          <label class="checkline">
+            <input id="repeatInput" type="checkbox" />
+            <span>允许重复排队</span>
+          </label>
+          <button id="saveBtn">保存设置</button>
+        </section>
+
+        <section class="section">
+          <h2>导出</h2>
+          <div class="button-row">
+            <a class="button" href="/api/export/queue.csv">队列 CSV</a>
+            <a class="button" href="/api/export/guards.csv">舰队名单 CSV</a>
+          </div>
+          <button id="clearBtn" class="danger">清空队列</button>
+        </section>
+
+        <section class="section">
+          <h2>导入名单</h2>
+          <textarea id="guardImport" rows="5" spellcheck="false" placeholder="UID,昵称,等级"></textarea>
+          <button id="importBtn">导入</button>
+        </section>
+      </aside>
+
+      <section class="queue-panel">
+        <div class="panel-head">
+          <div>
+            <h2>排队列表</h2>
+            <span id="queueCount">0 人</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span>舰队名单</span>
+              <strong id="guardCount">0</strong>
+            </div>
+            <div class="metric">
+              <span>规则</span>
+              <strong id="ruleText">曾经上过舰</strong>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>序号</th>
+                <th>用户</th>
+                <th>等级</th>
+                <th>弹幕</th>
+                <th>时间</th>
+              </tr>
+            </thead>
+            <tbody id="queueBody">
+              <tr>
+                <td colspan="5" class="empty">暂无排队</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside class="activity-panel">
+        <section class="section">
+          <h2>舰队名单</h2>
+          <div class="guard-list" id="guardList"></div>
+        </section>
+        <section class="section">
+          <h2>运行日志</h2>
+          <div class="log-list" id="logList"></div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

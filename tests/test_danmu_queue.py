@@ -1,0 +1,144 @@
+import csv
+import json
+import tempfile
+import unittest
+import zlib
+from pathlib import Path
+
+from danmu_queue import (
+    OP_MESSAGE,
+    PROTO_JSON,
+    PROTO_ZLIB,
+    DanmuMessage,
+    GuardBuyEvent,
+    QueueRecorder,
+    build_auth_payload,
+    build_packet,
+    decode_json_body,
+    extract_danmu,
+    extract_guard_buy,
+    iter_packets,
+    normalize_unix_timestamp,
+    parse_cookie,
+    sign_wbi_params,
+)
+from app import parse_danmu_time
+from app import QueueStore
+
+
+class DanmuQueueTests(unittest.TestCase):
+    def test_extracts_danmu_from_zlib_packet(self) -> None:
+        payload = {
+            "cmd": "DANMU_MSG",
+            "info": [[0, 1, 25, 16777215, 1786419000], "排队", [123456, "测试用户"], [], [], [], 3],
+        }
+        inner_packet = build_packet(json.dumps(payload, ensure_ascii=False), OP_MESSAGE, PROTO_JSON)
+        outer_packet = build_packet(zlib.compress(inner_packet), OP_MESSAGE, PROTO_ZLIB)
+
+        packets = list(iter_packets(outer_packet))
+        self.assertEqual(len(packets), 1)
+
+        danmu = extract_danmu(decode_json_body(packets[0].body))
+        self.assertEqual(danmu, DanmuMessage(123456, "测试用户", "排队", 1786419000, 3))
+
+    def test_extracts_guard_buy_event(self) -> None:
+        payload = {
+            "cmd": "GUARD_BUY",
+            "data": {
+                "uid": 123456,
+                "username": "测试用户",
+                "guard_level": 2,
+                "num": 1,
+                "price": 1998000,
+            },
+        }
+
+        self.assertEqual(extract_guard_buy(payload), GuardBuyEvent(123456, "测试用户", 2, 1, 1998000))
+
+    def test_signs_wbi_params(self) -> None:
+        signed = sign_wbi_params(
+            {"id": 1881089677, "type": 0, "web_location": "444.8"},
+            "0123456789abcdef0123456789abcdef",
+            wts=1786419000,
+        )
+
+        self.assertEqual(signed["wts"], "1786419000")
+        self.assertEqual(len(signed["w_rid"]), 32)
+        self.assertEqual(
+            signed,
+            sign_wbi_params(
+                {"web_location": "444.8", "type": 0, "id": 1881089677},
+                "0123456789abcdef0123456789abcdef",
+                wts=1786419000,
+            ),
+        )
+
+    def test_builds_auth_payload_from_cookie(self) -> None:
+        cookie = "SESSDATA=abc; DedeUserID=123456; buvid3=BV123; other=x"
+
+        self.assertEqual(parse_cookie(cookie)["DedeUserID"], "123456")
+        payload = build_auth_payload(1881089677, "token", cookie)
+        self.assertEqual(payload["uid"], 123456)
+        self.assertEqual(payload["buvid"], "BV123")
+        self.assertEqual(payload["roomid"], 1881089677)
+        self.assertEqual(payload["key"], "token")
+
+    def test_normalizes_millisecond_danmu_timestamp(self) -> None:
+        self.assertEqual(normalize_unix_timestamp(1786419000000), 1786419000)
+        self.assertIn("2026", parse_danmu_time(1786419000000))
+
+    def test_records_matching_danmu_once_per_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir) / "queue.csv"
+            recorder = QueueRecorder(output, allow_repeat=False)
+            danmu = DanmuMessage(123456, "测试用户", "我要排队", 1786419000)
+
+            self.assertTrue(recorder.should_record(danmu, "排队"))
+            self.assertEqual(recorder.append(danmu), (True, 1))
+            self.assertEqual(recorder.append(danmu), (False, None))
+
+            with output.open("r", encoding="utf-8", newline="") as file:
+                rows = list(csv.DictReader(file))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["queue_no"], "1")
+            self.assertEqual(rows[0]["uid"], "123456")
+            self.assertEqual(rows[0]["message"], "我要排队")
+
+    def test_store_allows_historical_guard_members(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = QueueStore(Path(tmpdir) / "queue.db")
+            settings = store.update_settings(
+                {
+                    "keyword": "排队",
+                    "eligibility_mode": "historical",
+                    "required_guard_level": 3,
+                    "allow_repeat": False,
+                }
+            )
+            danmu = DanmuMessage(123456, "测试用户", "我要排队", 1786419000, 0)
+
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (False, None, "not_eligible"))
+            store.upsert_guard(123456, "测试用户", 3, "guard_buy")
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (False, None, "duplicate"))
+
+    def test_store_can_require_tidu_or_above(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = QueueStore(Path(tmpdir) / "queue.db")
+            settings = store.update_settings(
+                {
+                    "keyword": "排队",
+                    "eligibility_mode": "current",
+                    "required_guard_level": 2,
+                    "allow_repeat": False,
+                }
+            )
+
+            captain = DanmuMessage(1001, "舰长用户", "排队", None, 3)
+            admiral = DanmuMessage(1002, "提督用户", "排队", None, 2)
+            self.assertEqual(store.enqueue_if_allowed(captain, settings), (False, None, "not_eligible"))
+            self.assertEqual(store.enqueue_if_allowed(admiral, settings), (True, 1, "queued"))
+
+
+if __name__ == "__main__":
+    unittest.main()
