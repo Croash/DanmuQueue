@@ -3,7 +3,11 @@
 ## Packaging
 
 - Support saving Cookie locally in a file, with clear safety guidance.
-- Package DanmuQueue as a desktop app so streamers do not need Python or a terminal.
+- [x] Add PyInstaller build scripts and placeholder app icons.
+- [x] Build and smoke-test macOS `DanmuQueue.app`.
+- [x] Build and verify macOS DMG installer.
+- Verify Windows `DanmuQueue.exe` build on Windows.
+- Optional: replace placeholder icon with polished production artwork.
 
 ## Queue Display
 

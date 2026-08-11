@@ -182,6 +182,11 @@ button.danger {
   color: var(--red);
 }
 
+button.subtle {
+  margin-top: 8px;
+  color: var(--muted);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.52;

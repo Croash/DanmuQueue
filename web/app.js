@@ -7,6 +7,7 @@ const els = {
   repeatInput: document.querySelector("#repeatInput"),
   connectBtn: document.querySelector("#connectBtn"),
   disconnectBtn: document.querySelector("#disconnectBtn"),
+  shutdownBtn: document.querySelector("#shutdownBtn"),
   saveBtn: document.querySelector("#saveBtn"),
   clearBtn: document.querySelector("#clearBtn"),
   resetOverlayBtn: document.querySelector("#resetOverlayBtn"),
@@ -246,6 +247,16 @@ els.disconnectBtn.addEventListener("click", async () => {
   try {
     await api("/api/disconnect", { method: "POST", body: "{}" });
     await refresh();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+els.shutdownBtn.addEventListener("click", async () => {
+  if (!confirm("退出 DanmuQueue？本地监听服务会停止。")) return;
+  try {
+    await api("/api/shutdown", { method: "POST", body: "{}" });
+    els.statusText.textContent = "正在退出";
   } catch (error) {
     alert(error.message);
   }

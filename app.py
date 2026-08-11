@@ -10,9 +10,13 @@ import io
 import json
 import mimetypes
 import os
+import platform
+import subprocess
+import sys
 import sqlite3
 import threading
 import time
+import webbrowser
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -55,6 +59,7 @@ DEFAULT_SETTINGS = {
 
 ELIGIBILITY_MODES = {"all", "historical", "current"}
 GUARD_NAMES = {1: "总督", 2: "提督", 3: "舰长"}
+APP_NAME = "DanmuQueue"
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,74 @@ def friendly_ws_error(exc: Exception) -> str:
     if "timed out" in message.lower() or "timeout" in message.lower():
         return "连接超时"
     return message
+
+
+def resource_root() -> Path:
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if frozen_root:
+        return Path(frozen_root)
+    return Path(__file__).resolve().parent
+
+
+def default_user_data_dir() -> Path:
+    override = os.environ.get("DANMUQUEUE_HOME")
+    if override:
+        return Path(override).expanduser()
+
+    system = platform.system()
+    if system == "Darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    if system == "Windows":
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata) / APP_NAME
+    return Path.home() / ".local" / "share" / APP_NAME
+
+
+def default_db_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return default_user_data_dir() / "danmu_queue.db"
+    return Path("danmu_queue.db")
+
+
+def local_ui_url(host: str, port: int) -> str:
+    display_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    return f"http://{display_host}:{port}/"
+
+
+def open_management_page(url: str) -> None:
+    system = platform.system()
+    if system == "Darwin":
+        try:
+            completed = subprocess.run(
+                ["open", "-a", "Google Chrome", url],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=4,
+            )
+            if completed.returncode == 0:
+                return
+        except Exception:
+            pass
+
+    try:
+        chrome = webbrowser.get("chrome")
+    except webbrowser.Error:
+        chrome = None
+    if chrome is not None:
+        chrome.open(url)
+        return
+
+    webbrowser.open(url)
+
+
+def open_management_page_later(url: str, delay: float = 0.8) -> None:
+    def worker() -> None:
+        time.sleep(delay)
+        open_management_page(url)
+
+    threading.Thread(target=worker, name="open-browser", daemon=True).start()
 
 
 class QueueStore:
@@ -881,6 +954,10 @@ class ApiHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/disconnect":
                 self.app.stop()
                 self.send_json({"ok": True})
+            elif parsed.path == "/api/shutdown":
+                self.app.stop()
+                self.send_json({"ok": True})
+                threading.Thread(target=self.server.shutdown, name="shutdown-server", daemon=True).start()
             elif parsed.path == "/api/queue/clear":
                 self.app.store.clear_queue()
                 self.app.store.log_event("info", "队列已清空")
@@ -976,7 +1053,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         return
 
 
-def run_server(host: str, port: int, db_path: Path, web_root: Path) -> None:
+def run_server(host: str, port: int, db_path: Path, web_root: Path, open_browser: bool = False) -> None:
     app = LocalDanmuQueueApp(db_path)
     app.store.log_event("info", "本地应用已启动")
 
@@ -986,27 +1063,40 @@ def run_server(host: str, port: int, db_path: Path, web_root: Path) -> None:
         {"app": app, "web_root": web_root},
     )
     server = ThreadingHTTPServer((host, port), handler)
-    print(f"[{local_now()}] DanmuQueue UI: http://{host}:{port}", flush=True)
+    url = local_ui_url(host, port)
+    print(f"[{local_now()}] DanmuQueue UI: {url}", flush=True)
+    print(f"[{local_now()}] 数据目录: {db_path.resolve().parent}", flush=True)
+    if open_browser:
+        open_management_page_later(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         app.stop()
         server.shutdown()
         print(f"[{local_now()}] 已停止。", flush=True)
+    finally:
+        server.server_close()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="DanmuQueue 本地 UI 应用。")
     parser.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1。")
     parser.add_argument("--port", type=int, default=8765, help="监听端口，默认 8765。")
-    parser.add_argument("--db", default="danmu_queue.db", help="SQLite 数据库文件，默认 danmu_queue.db。")
+    parser.add_argument("--db", default=None, help="SQLite 数据库文件；打包后默认保存到用户数据目录。")
+    parser.add_argument(
+        "--open-browser",
+        action="store_true",
+        default=bool(getattr(sys, "frozen", False)),
+        help="启动后自动打开管理页；打包应用默认开启。",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    root = Path(__file__).resolve().parent
-    run_server(args.host, args.port, Path(args.db), root / "web")
+    root = resource_root()
+    db_path = Path(args.db) if args.db else default_db_path()
+    run_server(args.host, args.port, db_path, root / "web", open_browser=args.open_browser)
     return 0
 
 

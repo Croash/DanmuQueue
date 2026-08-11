@@ -24,6 +24,12 @@ python app.py
 http://127.0.0.1:8765
 ```
 
+也可以启动后自动打开管理页：
+
+```bash
+python app.py --open-browser
+```
+
 页面里可以设置：
 
 - 直播间号：支持短号，应用会自动解析真实 room_id
@@ -64,6 +70,47 @@ python app.py
 ```
 
 WebSocket 弹幕线路断开并进入重连时，应用会每秒拉取一次 B 站最近历史弹幕接口，用同一套关键词、资格和去重规则补记排队。这个机制能减少短暂断线造成的漏记，但历史接口只返回有限数量的最近弹幕；如果断线期间弹幕量很大，窗口外的弹幕仍可能无法恢复。
+
+### 桌面应用打包
+
+安装开发依赖并生成图标：
+
+```bash
+pip install -r requirements-dev.txt
+python scripts/create_icons.py
+```
+
+构建当前系统的桌面应用：
+
+```bash
+python scripts/build_desktop.py
+```
+
+macOS 会生成：
+
+```text
+dist/DanmuQueue.app
+```
+
+构建 macOS DMG：
+
+```bash
+python scripts/build_dmg.py
+```
+
+输出文件示例：
+
+```text
+dist/DanmuQueue-macOS-arm64.dmg
+```
+
+打包应用启动后会自动打开管理页。打包状态下，数据库默认保存在用户数据目录，例如 macOS 的：
+
+```text
+~/Library/Application Support/DanmuQueue/danmu_queue.db
+```
+
+管理页里的“退出应用”会停止本地服务进程。Windows 版本需要在 Windows 环境中运行同一个构建脚本生成。
 
 ### 命令行版本
 

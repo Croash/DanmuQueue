@@ -5,3 +5,9 @@ __pycache__/
 queue.csv
 data/
 danmu_queue.db*
+
+.pyinstaller-cache/
+build/
+dist/
+DanmuQueue.spec
+packaging/icon.iconset/
