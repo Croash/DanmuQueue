@@ -202,6 +202,35 @@ def decode_json_body(body: bytes) -> dict[str, Any]:
     return json.loads(text)
 
 
+def extract_danmu_guard_level(info: list[Any]) -> int:
+    # Bilibili commonly exposes guard level in the fan medal block:
+    # 1=总督, 2=提督, 3=舰长, 0=无.
+    fan_medal = info[3] if len(info) > 3 and isinstance(info[3], list) else []
+    guard_level = safe_int(fan_medal[10], default=0) if len(fan_medal) > 10 else 0
+    if guard_level:
+        return guard_level
+
+    old_guard_level = safe_int(info[6], default=0) if len(info) > 6 else 0
+    if old_guard_level:
+        return old_guard_level
+
+    extra = info[0][15] if len(info) > 0 and isinstance(info[0], list) and len(info[0]) > 15 else None
+    if isinstance(extra, dict):
+        candidates = [
+            extra.get("guard_level"),
+            extra.get("guardLevel"),
+            extra.get("user", {}).get("guard", {}).get("level")
+            if isinstance(extra.get("user"), dict)
+            else None,
+        ]
+        for candidate in candidates:
+            parsed = safe_int(candidate, default=0) or 0
+            if parsed:
+                return parsed
+
+    return 0
+
+
 def extract_danmu(payload: dict[str, Any]) -> DanmuMessage | None:
     cmd = str(payload.get("cmd", "")).split(":", 1)[0]
     if cmd != "DANMU_MSG":
@@ -221,7 +250,7 @@ def extract_danmu(payload: dict[str, Any]) -> DanmuMessage | None:
     if len(meta) > 4:
         danmu_unix_ts = safe_int(meta[4], default=None)
 
-    guard_level = safe_int(info[6], default=0) if len(info) > 6 else 0
+    guard_level = extract_danmu_guard_level(info)
 
     return DanmuMessage(
         uid=uid,

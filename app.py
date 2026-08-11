@@ -257,6 +257,16 @@ class QueueStore:
             ).fetchone()
         return row is not None and guard_allowed(row["best_guard_level"], required_guard_level)
 
+    def has_guard_record(self, uid: int) -> bool:
+        if uid <= 0:
+            return False
+        with self.lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM guards WHERE uid = ? LIMIT 1",
+                (uid,),
+            ).fetchone()
+        return row is not None
+
     def enqueue_if_allowed(self, danmu: DanmuMessage, settings: dict[str, Any]) -> tuple[bool, int | None, str]:
         if settings["keyword"] not in danmu.message:
             return False, None, "keyword_miss"
@@ -266,7 +276,7 @@ class QueueStore:
         if mode == "current":
             eligible = guard_allowed(danmu.guard_level, required_level)
         elif mode == "historical":
-            eligible = self.guard_member_allowed(danmu.uid, required_level)
+            eligible = self.has_guard_record(danmu.uid)
         else:
             eligible = True
 

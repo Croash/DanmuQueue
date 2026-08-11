@@ -16,6 +16,7 @@ from danmu_queue import (
     build_packet,
     decode_json_body,
     extract_danmu,
+    extract_danmu_guard_level,
     extract_guard_buy,
     iter_packets,
     normalize_unix_timestamp,
@@ -40,6 +41,17 @@ class DanmuQueueTests(unittest.TestCase):
 
         danmu = extract_danmu(decode_json_body(packets[0].body))
         self.assertEqual(danmu, DanmuMessage(123456, "测试用户", "排队", 1786419000, 3))
+
+    def test_extracts_guard_level_from_fan_medal_block(self) -> None:
+        fan_medal = [0, "牌子", "主播", 1, 0, 0, 0, 0, 0, 0, 3]
+        payload = {
+            "cmd": "DANMU_MSG",
+            "info": [[0, 1, 25, 16777215, 1786419000], "准备街霸！", [3546903218227797, "今天不许后跳"], fan_medal],
+        }
+
+        self.assertEqual(extract_danmu_guard_level(payload["info"]), 3)
+        danmu = extract_danmu(payload)
+        self.assertEqual(danmu, DanmuMessage(3546903218227797, "今天不许后跳", "准备街霸！", 1786419000, 3))
 
     def test_extracts_guard_buy_event(self) -> None:
         payload = {
@@ -121,6 +133,22 @@ class DanmuQueueTests(unittest.TestCase):
             store.upsert_guard(123456, "测试用户", 3, "guard_buy")
             self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
             self.assertEqual(store.enqueue_if_allowed(danmu, settings), (False, None, "duplicate"))
+
+    def test_historical_mode_ignores_required_guard_level(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = QueueStore(Path(tmpdir) / "queue.db")
+            settings = store.update_settings(
+                {
+                    "keyword": "排队",
+                    "eligibility_mode": "historical",
+                    "required_guard_level": 1,
+                    "allow_repeat": False,
+                }
+            )
+            danmu = DanmuMessage(123456, "舰长用户", "排队", None, 0)
+
+            store.upsert_guard(123456, "舰长用户", 3, "guard_buy")
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
 
     def test_store_can_require_tidu_or_above(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

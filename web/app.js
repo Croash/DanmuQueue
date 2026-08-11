@@ -72,6 +72,7 @@ function hydrateSettings(settings) {
   els.modeSelect.value = settings.eligibility_mode || "historical";
   els.guardSelect.value = String(settings.required_guard_level || 3);
   els.repeatInput.checked = Boolean(settings.allow_repeat);
+  syncModeControls();
   hydrated = true;
 }
 
@@ -100,7 +101,13 @@ function renderMetrics(state) {
   const settings = state.settings;
   const mode = modeLabels[settings.eligibility_mode] || "曾经上过舰";
   const guard = settings.eligibility_mode === "all" ? "全部" : guardLabels[settings.required_guard_level];
-  els.ruleText.textContent = settings.eligibility_mode === "all" ? mode : `${mode} / ${guard}`;
+  els.ruleText.textContent =
+    settings.eligibility_mode === "current" ? `${mode} / ${guard}` : mode;
+}
+
+function syncModeControls() {
+  const usesGuardLevel = els.modeSelect.value === "current";
+  els.guardSelect.disabled = !usesGuardLevel;
 }
 
 function renderQueue(rows) {
@@ -217,6 +224,8 @@ els.saveBtn.addEventListener("click", async () => {
     alert(error.message);
   }
 });
+
+els.modeSelect.addEventListener("change", syncModeControls);
 
 els.connectBtn.addEventListener("click", async () => {
   try {
