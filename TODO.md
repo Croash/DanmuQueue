@@ -7,8 +7,8 @@
 
 ## Queue Display
 
-- Add a clean overlay page for live software browser sources.
-- Default queue display format should be one person per line:
+- [x] Add a clean overlay page for live software browser sources.
+- [x] Default queue display format should be one person per line:
 
 ```text
 1. Name
@@ -17,9 +17,11 @@
 
 ## Queue Management
 
+- [x] Support hiding a queued person from the overlay without removing the export record.
+- [x] Support adding a note/score from the overlay and preserving it in export data.
+- [x] Poll recent danmaku history during disconnect/reconnect gaps as a best-effort fallback.
 - Add an operator page that only shows queued people.
 - Support marking a queued person as completed/done from that page.
-- Support adding a note for each queued person, such as a match score.
 
 ## Export
 

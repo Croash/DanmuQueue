@@ -44,6 +44,7 @@ PROTO_BROTLI = 3
 
 ROOM_INIT_URL = "https://api.live.bilibili.com/room/v1/Room/room_init"
 DANMU_INFO_URL = "https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo"
+DANMU_HISTORY_URL = "https://api.live.bilibili.com/xlive/web-room/v1/dM/gethistory"
 WBI_NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
 
 MIXIN_KEY_ENC_TAB = [
@@ -259,6 +260,69 @@ def extract_danmu(payload: dict[str, Any]) -> DanmuMessage | None:
         danmu_unix_ts=danmu_unix_ts,
         guard_level=guard_level or 0,
     )
+
+
+def parse_history_timeline(value: Any) -> int | None:
+    if not value:
+        return None
+    text = str(value)
+    try:
+        return int(datetime.strptime(text, "%Y-%m-%d %H:%M:%S").astimezone().timestamp())
+    except ValueError:
+        return None
+
+
+def extract_history_danmu(item: dict[str, Any]) -> DanmuMessage | None:
+    message = str(item.get("text") or "")
+    if not message:
+        return None
+
+    user = item.get("user") if isinstance(item.get("user"), dict) else {}
+    user_base = user.get("base") if isinstance(user.get("base"), dict) else {}
+    uid = safe_int(item.get("uid"), default=0) or 0
+    uname = str(item.get("nickname") or item.get("uname") or user_base.get("name") or "")
+
+    check_info = item.get("check_info") if isinstance(item.get("check_info"), dict) else {}
+    danmu_unix_ts = safe_int(check_info.get("ts"), default=None)
+    if danmu_unix_ts is None:
+        danmu_unix_ts = parse_history_timeline(item.get("timeline"))
+
+    medal = item.get("medal") if isinstance(item.get("medal"), list) else []
+    user_medal = user.get("medal") if isinstance(user.get("medal"), dict) else {}
+    guard_level = (
+        safe_int(item.get("guard_level"), default=0)
+        or safe_int(user_medal.get("guard_level"), default=0)
+        or (safe_int(medal[10], default=0) if len(medal) > 10 else 0)
+        or 0
+    )
+
+    return DanmuMessage(
+        uid=uid,
+        uname=uname,
+        message=message,
+        danmu_unix_ts=danmu_unix_ts,
+        guard_level=guard_level,
+    )
+
+
+def danmu_fingerprint(danmu: DanmuMessage) -> str:
+    normalized_ts = normalize_unix_timestamp(danmu.danmu_unix_ts)
+    timestamp = int(normalized_ts) if normalized_ts else 0
+    return f"{danmu.uid}|{danmu.uname}|{danmu.message}|{timestamp}"
+
+
+def history_danmu_key(item: dict[str, Any], danmu: DanmuMessage) -> str:
+    id_str = str(item.get("id_str") or "").strip()
+    if id_str:
+        return f"id:{id_str}"
+
+    check_info = item.get("check_info") if isinstance(item.get("check_info"), dict) else {}
+    ct = str(check_info.get("ct") or "").strip()
+    ts = safe_int(check_info.get("ts"), default=0) or 0
+    if ct or ts:
+        return f"check:{ts}:{ct}:{danmu.uid}:{danmu.message}"
+
+    return f"fp:{danmu_fingerprint(danmu)}"
 
 
 def extract_guard_buy(payload: dict[str, Any]) -> GuardBuyEvent | None:
@@ -486,6 +550,37 @@ def get_danmu_info(room_id: int, cookie: str | None) -> dict[str, Any]:
             )
         raise RuntimeError(f"获取弹幕服务器失败：{message}")
     return data.get("data", {})
+
+
+def get_danmu_history(room_id: int, cookie: str | None) -> list[tuple[str, DanmuMessage]]:
+    data = request_json(DANMU_HISTORY_URL, {"roomid": room_id}, http_headers(room_id, cookie))
+    if data.get("code") != 0:
+        raise RuntimeError(f"获取历史弹幕失败：{data.get('message') or data.get('msg') or data}")
+
+    payload = data.get("data", {})
+    if not isinstance(payload, dict):
+        return []
+
+    result: list[tuple[str, DanmuMessage]] = []
+    for bucket in ("admin", "room"):
+        rows = payload.get(bucket)
+        if not isinstance(rows, list):
+            continue
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            danmu = extract_history_danmu(item)
+            if danmu is None:
+                continue
+            result.append((history_danmu_key(item, danmu), danmu))
+
+    return sorted(
+        result,
+        key=lambda pair: (
+            normalize_unix_timestamp(pair[1].danmu_unix_ts) or 0,
+            pair[0],
+        ),
+    )
 
 
 async def open_websocket(uri: str, headers: dict[str, str]) -> Any:

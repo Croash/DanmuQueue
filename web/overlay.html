@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DanmuQueue Overlay</title>
+    <link rel="stylesheet" href="/overlay.css" />
+  </head>
+  <body>
+    <main class="overlay">
+      <header class="overlay-head">
+        <div>
+          <h1 id="overlayTitle">排队中</h1>
+          <p id="overlayMeta">等待连接</p>
+        </div>
+        <span class="status" id="overlayStatus">离线</span>
+      </header>
+
+      <ol class="queue-list" id="overlayQueue">
+        <li class="empty">暂无排队</li>
+      </ol>
+    </main>
+
+    <script src="/overlay.js"></script>
+  </body>
+</html>

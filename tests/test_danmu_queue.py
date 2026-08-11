@@ -15,9 +15,12 @@ from danmu_queue import (
     build_auth_payload,
     build_packet,
     decode_json_body,
+    danmu_fingerprint,
     extract_danmu,
     extract_danmu_guard_level,
     extract_guard_buy,
+    extract_history_danmu,
+    history_danmu_key,
     iter_packets,
     normalize_unix_timestamp,
     parse_cookie,
@@ -66,6 +69,23 @@ class DanmuQueueTests(unittest.TestCase):
         }
 
         self.assertEqual(extract_guard_buy(payload), GuardBuyEvent(123456, "测试用户", 2, 1, 1998000))
+
+    def test_extracts_history_danmu(self) -> None:
+        item = {
+            "text": "排队",
+            "uid": 123456,
+            "nickname": "测试用户",
+            "timeline": "2026-08-11 21:47:41",
+            "guard_level": 3,
+            "id_str": "abc123",
+            "check_info": {"ts": 1786456061, "ct": "C174BE58"},
+        }
+
+        danmu = extract_history_danmu(item)
+
+        self.assertEqual(danmu, DanmuMessage(123456, "测试用户", "排队", 1786456061, 3))
+        self.assertEqual(history_danmu_key(item, danmu), "id:abc123")
+        self.assertEqual(danmu_fingerprint(danmu), "123456|测试用户|排队|1786456061")
 
     def test_signs_wbi_params(self) -> None:
         signed = sign_wbi_params(
@@ -149,6 +169,32 @@ class DanmuQueueTests(unittest.TestCase):
 
             store.upsert_guard(123456, "舰长用户", 3, "guard_buy")
             self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
+
+    def test_overlay_hiding_does_not_remove_export_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = QueueStore(Path(tmpdir) / "queue.db")
+            settings = store.update_settings(
+                {
+                    "keyword": "排队",
+                    "eligibility_mode": "all",
+                    "allow_repeat": False,
+                }
+            )
+            danmu = DanmuMessage(123456, "测试用户", "排队", None, 0)
+
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
+            self.assertEqual(len(store.list_overlay_queue()), 1)
+            self.assertTrue(store.update_queue_note(1, "3-2"))
+            self.assertEqual(store.list_queue()[0]["note"], "3-2")
+
+            self.assertTrue(store.hide_overlay_queue_item(1))
+            self.assertEqual(store.list_overlay_queue(), [])
+            self.assertEqual(len(store.list_queue()), 1)
+            self.assertIn("测试用户", store.export_queue_csv())
+            self.assertIn("3-2", store.export_queue_csv())
+
+            self.assertEqual(store.reset_overlay_queue(), 1)
+            self.assertEqual(len(store.list_overlay_queue()), 1)
 
     def test_store_can_require_tidu_or_above(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

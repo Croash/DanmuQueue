@@ -9,6 +9,7 @@ const els = {
   disconnectBtn: document.querySelector("#disconnectBtn"),
   saveBtn: document.querySelector("#saveBtn"),
   clearBtn: document.querySelector("#clearBtn"),
+  resetOverlayBtn: document.querySelector("#resetOverlayBtn"),
   importBtn: document.querySelector("#importBtn"),
   guardImport: document.querySelector("#guardImport"),
   statusPill: document.querySelector("#statusPill"),
@@ -101,8 +102,9 @@ function renderMetrics(state) {
   const settings = state.settings;
   const mode = modeLabels[settings.eligibility_mode] || "曾经上过舰";
   const guard = settings.eligibility_mode === "all" ? "全部" : guardLabels[settings.required_guard_level];
-  els.ruleText.textContent =
-    settings.eligibility_mode === "current" ? `${mode} / ${guard}` : mode;
+  const keyword = settings.keyword || "排队";
+  const eligibility = settings.eligibility_mode === "current" ? `${mode} / ${guard}` : mode;
+  els.ruleText.textContent = `${keyword} / ${eligibility}`;
 }
 
 function syncModeControls() {
@@ -112,7 +114,7 @@ function syncModeControls() {
 
 function renderQueue(rows) {
   if (!rows.length) {
-    els.queueBody.innerHTML = `<tr><td colspan="5" class="empty">暂无排队</td></tr>`;
+    els.queueBody.innerHTML = `<tr><td colspan="6" class="empty">暂无排队</td></tr>`;
     return;
   }
 
@@ -127,6 +129,7 @@ function renderQueue(rows) {
           </td>
           <td><span class="badge">${escapeHtml(row.guard_name || "无")}</span></td>
           <td class="message">${escapeHtml(row.message || "")}</td>
+          <td>${escapeHtml(row.note || "")}</td>
           <td>${shortTime(row.queued_at)}</td>
         </tr>
       `,
@@ -252,6 +255,15 @@ els.clearBtn.addEventListener("click", async () => {
   if (!confirm("清空当前队列？")) return;
   try {
     await api("/api/queue/clear", { method: "POST", body: "{}" });
+    await refresh();
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+els.resetOverlayBtn.addEventListener("click", async () => {
+  try {
+    await api("/api/queue/overlay/reset", { method: "POST", body: "{}" });
     await refresh();
   } catch (error) {
     alert(error.message);

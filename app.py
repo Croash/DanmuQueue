@@ -12,6 +12,7 @@ import mimetypes
 import os
 import sqlite3
 import threading
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,9 +29,11 @@ from danmu_queue import (
     DanmuMessage,
     build_packet,
     build_auth_payload,
+    danmu_fingerprint,
     decode_json_body,
     extract_danmu,
     extract_guard_buy,
+    get_danmu_history,
     get_danmu_info,
     http_headers,
     iter_packets,
@@ -137,10 +140,20 @@ class QueueStore:
                     uid INTEGER NOT NULL,
                     uname TEXT NOT NULL,
                     message TEXT NOT NULL,
-                    guard_level INTEGER NOT NULL
+                    guard_level INTEGER NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    overlay_hidden_at TEXT NOT NULL DEFAULT ''
                 )
                 """
             )
+            queue_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(queue)").fetchall()
+            }
+            if "note" not in queue_columns:
+                conn.execute("ALTER TABLE queue ADD COLUMN note TEXT NOT NULL DEFAULT ''")
+            if "overlay_hidden_at" not in queue_columns:
+                conn.execute("ALTER TABLE queue ADD COLUMN overlay_hidden_at TEXT NOT NULL DEFAULT ''")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS guards (
@@ -301,8 +314,8 @@ class QueueStore:
             queue_no = int(row["next_no"])
             conn.execute(
                 """
-                INSERT INTO queue(queue_no, queued_at, danmu_time, uid, uname, message, guard_level)
-                VALUES(?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO queue(queue_no, queued_at, danmu_time, uid, uname, message, guard_level, note)
+                VALUES(?, ?, ?, ?, ?, ?, ?, '')
                 """,
                 (
                     queue_no,
@@ -319,6 +332,45 @@ class QueueStore:
     def clear_queue(self) -> None:
         with self.lock, self._connect() as conn:
             conn.execute("DELETE FROM queue")
+
+    def hide_overlay_queue_item(self, queue_no: int) -> bool:
+        if queue_no <= 0:
+            return False
+        with self.lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE queue
+                SET overlay_hidden_at = ?
+                WHERE queue_no = ?
+                """,
+                (local_now(), queue_no),
+            )
+            return cursor.rowcount > 0
+
+    def reset_overlay_queue(self) -> int:
+        with self.lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE queue
+                SET overlay_hidden_at = ''
+                WHERE COALESCE(overlay_hidden_at, '') != ''
+                """
+            )
+            return cursor.rowcount
+
+    def update_queue_note(self, queue_no: int, note: str) -> bool:
+        if queue_no <= 0:
+            return False
+        with self.lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE queue
+                SET note = ?
+                WHERE queue_no = ?
+                """,
+                (note.strip(), queue_no),
+            )
+            return cursor.rowcount > 0
 
     def log_event(self, level: str, message: str) -> None:
         with self.lock, self._connect() as conn:
@@ -339,8 +391,22 @@ class QueueStore:
         with self.lock, self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT queue_no, queued_at, danmu_time, uid, uname, message, guard_level
+                SELECT queue_no, queued_at, danmu_time, uid, uname, message, guard_level, note, overlay_hidden_at
                 FROM queue
+                ORDER BY queue_no ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._row_with_guard_name(row) for row in rows]
+
+    def list_overlay_queue(self, limit: int = 300) -> list[dict[str, Any]]:
+        with self.lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT queue_no, queued_at, danmu_time, uid, uname, message, guard_level, note, overlay_hidden_at
+                FROM queue
+                WHERE COALESCE(overlay_hidden_at, '') = ''
                 ORDER BY queue_no ASC
                 LIMIT ?
                 """,
@@ -389,7 +455,7 @@ class QueueStore:
     def export_queue_csv(self) -> str:
         rows = self.list_queue(limit=100000)
         output = io.StringIO()
-        fieldnames = ["queue_no", "queued_at", "danmu_time", "uid", "uname", "guard_name", "message"]
+        fieldnames = ["queue_no", "queued_at", "danmu_time", "uid", "uname", "guard_name", "message", "note"]
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
@@ -432,6 +498,8 @@ class LocalDanmuQueueApp:
         self.cookie = os.environ.get("BILI_COOKIE")
         self.stop_event = threading.Event()
         self.listener_thread: threading.Thread | None = None
+        self.history_lock = threading.RLock()
+        self.seen_danmu_keys: dict[str, float] = {}
 
     def get_state(self) -> dict[str, Any]:
         with self.status_lock:
@@ -441,6 +509,7 @@ class LocalDanmuQueueApp:
             "status": status,
             "counts": self.store.counts(),
             "queue": self.store.list_queue(),
+            "overlay_queue": self.store.list_overlay_queue(),
             "guards": self.store.list_guards(),
             "logs": self.store.list_logs(),
         }
@@ -525,6 +594,7 @@ class LocalDanmuQueueApp:
                 started_at=self.status.started_at,
             )
         self.store.log_event("info", f"真实 room_id：{real_room_id}")
+        await self._prime_history_cache(real_room_id, cookie)
 
         attempt = 0
         while not self.stop_event.is_set():
@@ -549,7 +619,7 @@ class LocalDanmuQueueApp:
                     )
                 delay = min(45, 2**min(attempt, 5))
                 self.store.log_event("error", f"{message}；{delay} 秒后重连")
-                await self._sleep_until_stop(delay)
+                await self._poll_history_until_stop(real_room_id, cookie, delay)
 
     async def _listen_once(self, real_room_id: int, cookie: str | None) -> None:
         danmu_info = get_danmu_info(real_room_id, cookie)
@@ -570,6 +640,7 @@ class LocalDanmuQueueApp:
                 host_name = str(host.get("host") or "unknown")
                 errors.append(f"{host_name}: {message}")
                 self.store.log_event("warn", f"弹幕线路断开，切换下一条：{host_name} - {message}")
+                await self._poll_history_safely(real_room_id, cookie)
 
         detail = "；".join(errors[-3:]) if errors else "没有可用线路"
         raise RuntimeError(f"弹幕线路都连接失败：{detail}")
@@ -651,6 +722,97 @@ class LocalDanmuQueueApp:
                 return
             await asyncio.sleep(min(0.5, remaining))
 
+    async def _prime_history_cache(self, real_room_id: int, cookie: str | None) -> None:
+        try:
+            history = await asyncio.to_thread(get_danmu_history, real_room_id, cookie)
+        except Exception as exc:
+            self.store.log_event("warn", f"历史弹幕缓存初始化失败：{friendly_ws_error(exc)}")
+            return
+
+        for key, danmu in history:
+            self._remember_danmu(danmu, key)
+
+    async def _poll_history_until_stop(self, real_room_id: int, cookie: str | None, delay: float) -> None:
+        loop = asyncio.get_running_loop()
+        end_at = loop.time() + delay
+        next_poll_at = 0.0
+        last_error_log_at = 0.0
+        while not self.stop_event.is_set():
+            now = loop.time()
+            if now >= end_at:
+                return
+            if now >= next_poll_at:
+                try:
+                    await asyncio.to_thread(self._poll_history_once, real_room_id, cookie)
+                except Exception as exc:
+                    if now - last_error_log_at >= 10:
+                        self.store.log_event("warn", f"历史弹幕补漏失败：{friendly_ws_error(exc)}")
+                        last_error_log_at = now
+                next_poll_at = now + 1
+
+            await asyncio.sleep(min(0.25, max(0.05, min(end_at, next_poll_at) - loop.time())))
+
+    async def _poll_history_safely(self, real_room_id: int, cookie: str | None) -> None:
+        try:
+            await asyncio.to_thread(self._poll_history_once, real_room_id, cookie)
+        except Exception as exc:
+            self.store.log_event("warn", f"历史弹幕补漏失败：{friendly_ws_error(exc)}")
+
+    def _poll_history_once(self, real_room_id: int, cookie: str | None) -> int:
+        saved_count = 0
+        for key, danmu in get_danmu_history(real_room_id, cookie):
+            if not self._remember_danmu(danmu, key):
+                continue
+            if self._record_danmu(danmu, "history"):
+                saved_count += 1
+        return saved_count
+
+    def _remember_danmu(self, danmu: DanmuMessage, source_key: str | None = None) -> bool:
+        now = time.monotonic()
+        keys = [f"fp:{danmu_fingerprint(danmu)}"]
+        if source_key:
+            keys.append(source_key)
+
+        with self.history_lock:
+            expired = [
+                key
+                for key, seen_at in self.seen_danmu_keys.items()
+                if now - seen_at > 10 * 60
+            ]
+            for key in expired:
+                self.seen_danmu_keys.pop(key, None)
+
+            if any(key in self.seen_danmu_keys for key in keys):
+                return False
+            for key in keys:
+                self.seen_danmu_keys[key] = now
+            return True
+
+    def _record_danmu(self, danmu: DanmuMessage, source: str) -> bool:
+        if danmu.guard_level > 0:
+            self.store.upsert_guard(danmu.uid, danmu.uname, danmu.guard_level, source)
+
+        settings = self.store.get_settings()
+        saved, queue_no, reason = self.store.enqueue_if_allowed(danmu, settings)
+        if saved:
+            label = "历史补漏" if source == "history" else "排队"
+            self.store.log_event(
+                "success",
+                f"{label} #{queue_no}：{danmu.uname}({danmu.uid}) {guard_name(danmu.guard_level)}",
+            )
+            return True
+        if reason == "not_eligible":
+            self.store.log_event(
+                "warn",
+                f"未满足资格：{danmu.uname}({danmu.uid}) - {danmu.message}",
+            )
+        elif reason == "duplicate":
+            self.store.log_event(
+                "warn",
+                f"重复排队：{danmu.uname}({danmu.uid})",
+            )
+        return False
+
     def _handle_payload(self, payload: dict[str, Any]) -> None:
         guard_buy = extract_guard_buy(payload)
         if guard_buy is not None:
@@ -669,26 +831,9 @@ class LocalDanmuQueueApp:
         danmu = extract_danmu(payload)
         if danmu is None:
             return
-        if danmu.guard_level > 0:
-            self.store.upsert_guard(danmu.uid, danmu.uname, danmu.guard_level, "danmu")
-
-        settings = self.store.get_settings()
-        saved, queue_no, reason = self.store.enqueue_if_allowed(danmu, settings)
-        if saved:
-            self.store.log_event(
-                "success",
-                f"排队 #{queue_no}：{danmu.uname}({danmu.uid}) {guard_name(danmu.guard_level)}",
-            )
-        elif reason == "not_eligible":
-            self.store.log_event(
-                "warn",
-                f"未满足资格：{danmu.uname}({danmu.uid}) - {danmu.message}",
-            )
-        elif reason == "duplicate":
-            self.store.log_event(
-                "warn",
-                f"重复排队：{danmu.uname}({danmu.uid})",
-            )
+        if not self._remember_danmu(danmu):
+            return
+        self._record_danmu(danmu, "danmu")
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -740,6 +885,23 @@ class ApiHandler(BaseHTTPRequestHandler):
                 self.app.store.clear_queue()
                 self.app.store.log_event("info", "队列已清空")
                 self.send_json({"ok": True})
+            elif parsed.path == "/api/queue/overlay/hide":
+                queue_no = safe_int(body.get("queue_no"), default=0) or 0
+                if not self.app.store.hide_overlay_queue_item(queue_no):
+                    raise ValueError("未找到这个排队序号。")
+                self.app.store.log_event("info", f"overlay 已隐藏 #{queue_no}")
+                self.send_json({"ok": True})
+            elif parsed.path == "/api/queue/overlay/reset":
+                restored = self.app.store.reset_overlay_queue()
+                self.app.store.log_event("info", f"overlay 已恢复展示 {restored} 条")
+                self.send_json({"ok": True, "restored": restored})
+            elif parsed.path == "/api/queue/note":
+                queue_no = safe_int(body.get("queue_no"), default=0) or 0
+                note = str(body.get("note") or "")
+                if not self.app.store.update_queue_note(queue_no, note):
+                    raise ValueError("未找到这个排队序号。")
+                self.app.store.log_event("info", f"已更新 #{queue_no} 备注")
+                self.send_json({"ok": True})
             elif parsed.path == "/api/guards/import":
                 settings = self.app.store.get_settings()
                 imported = self.app.store.import_guards(
@@ -787,6 +949,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         path = unquote(request_path)
         if path == "/":
             path = "/index.html"
+        elif path == "/overlay":
+            path = "/overlay.html"
         file_path = (self.web_root / path.lstrip("/")).resolve()
         try:
             file_path.relative_to(self.web_root.resolve())
