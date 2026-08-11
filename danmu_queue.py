@@ -131,6 +131,7 @@ class DanmuMessage:
     message: str
     danmu_unix_ts: int | None
     guard_level: int = 0
+    medal_level: int = 0
 
 
 @dataclass(frozen=True)
@@ -232,6 +233,13 @@ def extract_danmu_guard_level(info: list[Any]) -> int:
     return 0
 
 
+def extract_danmu_medal_level(info: list[Any]) -> int:
+    fan_medal = info[3] if len(info) > 3 and isinstance(info[3], list) else []
+    if not fan_medal:
+        return 0
+    return safe_int(fan_medal[0], default=0) or 0
+
+
 def extract_danmu(payload: dict[str, Any]) -> DanmuMessage | None:
     cmd = str(payload.get("cmd", "")).split(":", 1)[0]
     if cmd != "DANMU_MSG":
@@ -252,6 +260,7 @@ def extract_danmu(payload: dict[str, Any]) -> DanmuMessage | None:
         danmu_unix_ts = safe_int(meta[4], default=None)
 
     guard_level = extract_danmu_guard_level(info)
+    medal_level = extract_danmu_medal_level(info)
 
     return DanmuMessage(
         uid=uid,
@@ -259,6 +268,7 @@ def extract_danmu(payload: dict[str, Any]) -> DanmuMessage | None:
         message=message,
         danmu_unix_ts=danmu_unix_ts,
         guard_level=guard_level or 0,
+        medal_level=medal_level,
     )
 
 
@@ -289,6 +299,11 @@ def extract_history_danmu(item: dict[str, Any]) -> DanmuMessage | None:
 
     medal = item.get("medal") if isinstance(item.get("medal"), list) else []
     user_medal = user.get("medal") if isinstance(user.get("medal"), dict) else {}
+    medal_level = (
+        safe_int(user_medal.get("level"), default=0)
+        or (safe_int(medal[0], default=0) if medal else 0)
+        or 0
+    )
     guard_level = (
         safe_int(item.get("guard_level"), default=0)
         or safe_int(user_medal.get("guard_level"), default=0)
@@ -302,6 +317,7 @@ def extract_history_danmu(item: dict[str, Any]) -> DanmuMessage | None:
         message=message,
         danmu_unix_ts=danmu_unix_ts,
         guard_level=guard_level,
+        medal_level=medal_level,
     )
 
 

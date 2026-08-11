@@ -60,6 +60,7 @@ DEFAULT_SETTINGS = {
 ELIGIBILITY_MODES = {"all", "historical", "current"}
 GUARD_NAMES = {1: "总督", 2: "提督", 3: "舰长"}
 APP_NAME = "DanmuQueue"
+FORMER_CAPTAIN_MEDAL_LEVEL = 21
 
 
 @dataclass(frozen=True)
@@ -864,6 +865,8 @@ class LocalDanmuQueueApp:
     def _record_danmu(self, danmu: DanmuMessage, source: str) -> bool:
         if danmu.guard_level > 0:
             self.store.upsert_guard(danmu.uid, danmu.uname, danmu.guard_level, source)
+        elif danmu.medal_level >= FORMER_CAPTAIN_MEDAL_LEVEL:
+            self.store.upsert_guard(danmu.uid, danmu.uname, 3, "former_captain_medal")
 
         settings = self.store.get_settings()
         saved, queue_no, reason = self.store.enqueue_if_allowed(danmu, settings)

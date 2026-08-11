@@ -18,6 +18,7 @@ from danmu_queue import (
     danmu_fingerprint,
     extract_danmu,
     extract_danmu_guard_level,
+    extract_danmu_medal_level,
     extract_guard_buy,
     extract_history_danmu,
     history_danmu_key,
@@ -26,8 +27,7 @@ from danmu_queue import (
     parse_cookie,
     sign_wbi_params,
 )
-from app import parse_danmu_time
-from app import QueueStore
+from app import LocalDanmuQueueApp, QueueStore, parse_danmu_time
 
 
 class DanmuQueueTests(unittest.TestCase):
@@ -56,6 +56,17 @@ class DanmuQueueTests(unittest.TestCase):
         danmu = extract_danmu(payload)
         self.assertEqual(danmu, DanmuMessage(3546903218227797, "今天不许后跳", "准备街霸！", 1786419000, 3))
 
+    def test_extracts_medal_level_from_fan_medal_block(self) -> None:
+        fan_medal = [32, "漂亮刘", "主播", 11113452, 0, "", 0, 0, 0, 0, 0]
+        payload = {
+            "cmd": "DANMU_MSG",
+            "info": [[0, 1, 25, 16777215, 1786419000], "排队", [535118771, "前舰长用户"], fan_medal],
+        }
+
+        self.assertEqual(extract_danmu_medal_level(payload["info"]), 32)
+        danmu = extract_danmu(payload)
+        self.assertEqual(danmu, DanmuMessage(535118771, "前舰长用户", "排队", 1786419000, 0, 32))
+
     def test_extracts_guard_buy_event(self) -> None:
         payload = {
             "cmd": "GUARD_BUY",
@@ -77,13 +88,14 @@ class DanmuQueueTests(unittest.TestCase):
             "nickname": "测试用户",
             "timeline": "2026-08-11 21:47:41",
             "guard_level": 3,
+            "medal": [34, "漂亮刘", "主播", 11113452, 0, "", 0, 0, 0, 0, 3],
             "id_str": "abc123",
             "check_info": {"ts": 1786456061, "ct": "C174BE58"},
         }
 
         danmu = extract_history_danmu(item)
 
-        self.assertEqual(danmu, DanmuMessage(123456, "测试用户", "排队", 1786456061, 3))
+        self.assertEqual(danmu, DanmuMessage(123456, "测试用户", "排队", 1786456061, 3, 34))
         self.assertEqual(history_danmu_key(item, danmu), "id:abc123")
         self.assertEqual(danmu_fingerprint(danmu), "123456|测试用户|排队|1786456061")
 
@@ -169,6 +181,43 @@ class DanmuQueueTests(unittest.TestCase):
 
             store.upsert_guard(123456, "舰长用户", 3, "guard_buy")
             self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
+
+    def test_former_captain_medal_record_allows_historical_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = QueueStore(Path(tmpdir) / "queue.db")
+            settings = store.update_settings(
+                {
+                    "keyword": "排队",
+                    "eligibility_mode": "historical",
+                    "required_guard_level": 3,
+                    "allow_repeat": False,
+                }
+            )
+            danmu = DanmuMessage(535118771, "前舰长用户", "排队", None, 0, 32)
+
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (False, None, "not_eligible"))
+            store.upsert_guard(danmu.uid, danmu.uname, 3, "former_captain_medal")
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
+
+    def test_high_medal_level_danmu_is_recorded_as_former_captain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app = LocalDanmuQueueApp(Path(tmpdir) / "queue.db")
+            app.store.update_settings(
+                {
+                    "keyword": "排队",
+                    "eligibility_mode": "historical",
+                    "required_guard_level": 3,
+                    "allow_repeat": False,
+                }
+            )
+            danmu = DanmuMessage(535118771, "前舰长用户", "排队", None, 0, 32)
+
+            self.assertTrue(app._record_danmu(danmu, "danmu"))
+            guard = app.store.list_guards(limit=1)[0]
+            self.assertEqual(guard["uid"], 535118771)
+            self.assertEqual(guard["best_guard_level"], 3)
+            self.assertEqual(guard["source"], "former_captain_medal")
+            self.assertEqual(app.store.list_queue()[0]["uid"], 535118771)
 
     def test_overlay_hiding_does_not_remove_export_queue(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
