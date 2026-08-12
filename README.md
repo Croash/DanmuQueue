@@ -39,6 +39,8 @@ python app.py --open-browser
 - 是否允许重复排队
 - Cookie：可选，只在本次本地应用运行期间使用，不写入数据库
 
+也可以直接准备本地配置文件 `config.local.json`，应用启动时会自动读取；模板见 `config.local.example.json`。
+
 导出：
 
 - 队列 CSV：`/api/export/queue.csv`
@@ -111,7 +113,11 @@ dist/DanmuQueue-macOS-arm64.dmg
 ~/Library/Application Support/DanmuQueue/danmu_queue.db
 ```
 
+本地配置文件默认保存在同一目录下的 `config.local.json`。
+
 管理页里的“退出应用”会停止本地服务进程。Windows 版本需要在 Windows 环境中运行同一个构建脚本生成。
+
+如果仓库已经推到 GitHub，可以在 `Actions` 里手动触发 `Windows Package` workflow，执行完后会把 Windows 产物上传成 artifact。
 
 ### 命令行版本
 

@@ -60,6 +60,8 @@ DEFAULT_SETTINGS = {
 ELIGIBILITY_MODES = {"all", "historical", "current"}
 GUARD_NAMES = {1: "总督", 2: "提督", 3: "舰长"}
 APP_NAME = "DanmuQueue"
+CONFIG_FILENAME = "config.local.json"
+CONFIG_EXAMPLE_FILENAME = "config.local.example.json"
 FORMER_CAPTAIN_MEDAL_LEVEL = 21
 
 
@@ -136,9 +138,43 @@ def default_user_data_dir() -> Path:
 
 
 def default_db_path() -> Path:
-    if getattr(sys, "frozen", False):
+    if getattr(sys, "frozen", False) or os.environ.get("DANMUQUEUE_HOME"):
         return default_user_data_dir() / "danmu_queue.db"
     return Path("danmu_queue.db")
+
+
+def default_config_path() -> Path:
+    override = os.environ.get("DANMUQUEUE_CONFIG")
+    if override:
+        return Path(override).expanduser()
+    if getattr(sys, "frozen", False) or os.environ.get("DANMUQUEUE_HOME"):
+        return default_user_data_dir() / CONFIG_FILENAME
+    return resource_root() / CONFIG_FILENAME
+
+
+def load_local_config(config_path: Path) -> dict[str, Any] | None:
+    if not config_path.exists():
+        return None
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError("配置文件必须是一个 JSON 对象。")
+    return {
+        "settings": normalize_settings(raw),
+        "cookie": str(raw.get("cookie") or "").strip(),
+    }
+
+
+def save_local_config(config_path: Path, settings: dict[str, Any], cookie: str | None = None) -> None:
+    payload = dict(settings)
+    if cookie is None and config_path.exists():
+        try:
+            existing = load_local_config(config_path)
+        except Exception:
+            existing = None
+        cookie = str((existing or {}).get("cookie") or "")
+    payload["cookie"] = str(cookie or "").strip()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def local_ui_url(host: str, port: int) -> str:
@@ -575,16 +611,18 @@ class QueueStore:
 
 
 class LocalDanmuQueueApp:
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, config_path: Path | None = None) -> None:
         self.store = QueueStore(db_path)
         self.status_lock = threading.RLock()
         self.status = ListenerStatus()
         self.cookie_lock = threading.RLock()
         self.cookie = os.environ.get("BILI_COOKIE")
+        self.config_path = config_path or default_config_path()
         self.stop_event = threading.Event()
         self.listener_thread: threading.Thread | None = None
         self.history_lock = threading.RLock()
         self.seen_danmu_keys: dict[str, float] = {}
+        self._load_local_config()
 
     def get_state(self) -> dict[str, Any]:
         with self.status_lock:
@@ -599,6 +637,25 @@ class LocalDanmuQueueApp:
             "logs": self.store.list_logs(),
         }
         return state
+
+    def _load_local_config(self) -> None:
+        try:
+            payload = load_local_config(self.config_path)
+        except Exception as exc:
+            self.store.log_event("warn", f"本地 config 读取失败：{exc}")
+            return
+        if not payload:
+            return
+        self.store.update_settings(payload["settings"])
+        if payload.get("cookie"):
+            self.set_cookie(str(payload["cookie"]))
+        self.store.log_event("info", f"已载入本地 config：{self.config_path}")
+
+    def persist_local_config(self) -> None:
+        try:
+            save_local_config(self.config_path, self.store.get_settings(), self.get_cookie())
+        except Exception as exc:
+            self.store.log_event("warn", f"本地 config 保存失败：{exc}")
 
     def start(self, room: str | None = None) -> None:
         settings = self.store.get_settings()
@@ -962,6 +1019,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             body = self.read_json_body()
             if parsed.path == "/api/settings":
                 settings = self.app.store.update_settings(body)
+                if "cookie" in body:
+                    self.app.set_cookie(str(body.get("cookie") or ""))
+                self.app.persist_local_config()
                 self.app.store.log_event("info", "设置已保存")
                 self.send_json({"ok": True, "settings": settings})
             elif parsed.path == "/api/connect":
@@ -969,6 +1029,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                     if "cookie" in body:
                         self.app.set_cookie(str(body.get("cookie") or ""))
                     self.app.store.update_settings(body)
+                    self.app.persist_local_config()
                 self.app.start()
                 self.send_json({"ok": True})
             elif parsed.path == "/api/disconnect":
@@ -1007,6 +1068,12 @@ class ApiHandler(BaseHTTPRequestHandler):
                 )
                 self.app.store.log_event("info", f"已导入 {imported} 个舰队成员")
                 self.send_json({"ok": True, "imported": imported})
+            elif parsed.path == "/api/config/clear":
+                if self.app.config_path.exists():
+                    self.app.config_path.unlink()
+                self.app.set_cookie("")
+                self.app.store.log_event("info", "本地 config 已清除")
+                self.send_json({"ok": True})
             else:
                 self.send_error(404)
         except Exception as exc:

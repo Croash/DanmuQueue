@@ -5,6 +5,7 @@ __pycache__/
 queue.csv
 data/
 danmu_queue.db*
+config.local.json
 
 .pyinstaller-cache/
 build/
