@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import struct
 import sys
 import time
@@ -368,6 +369,45 @@ def safe_int(value: Any, default: int | None = 0) -> int | None:
         return default
 
 
+def normalize_keyword_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (list, tuple, set)):
+        parts: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
+    return str(value).strip()
+
+
+def split_keywords(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        parts: list[str] = []
+        for item in value:
+            parts.extend(split_keywords(item))
+        return parts
+
+    keywords = []
+    seen: set[str] = set()
+    for raw_part in re.split(r"[\n,，;；|]+", str(value).replace("\r", "\n")):
+        keyword = raw_part.strip()
+        if not keyword or keyword in seen:
+            continue
+        seen.add(keyword)
+        keywords.append(keyword)
+    return keywords
+
+
+def keyword_matches(message: str, keywords: Any) -> bool:
+    return any(keyword in message for keyword in split_keywords(keywords))
+
+
 class QueueRecorder:
     fieldnames = ["queue_no", "queued_at", "danmu_time", "uid", "uname", "message"]
 
@@ -393,7 +433,7 @@ class QueueRecorder:
                     self.seen.add(key)
 
     def should_record(self, danmu: DanmuMessage, keyword: str) -> bool:
-        return keyword in danmu.message
+        return keyword_matches(danmu.message, keyword)
 
     def append(self, danmu: DanmuMessage) -> tuple[bool, int | None]:
         key = self._identity_key(danmu.uid, danmu.uname)
@@ -696,7 +736,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="监听 B 站直播弹幕，命中关键词后写入排队 CSV。")
     parser.add_argument("-r", "--room", type=int, required=True, help="B 站直播间号，支持短号。")
     parser.add_argument("-o", "--output", default="queue.csv", help="队列记录文件，默认 queue.csv。")
-    parser.add_argument("-k", "--keyword", default="排队", help="触发排队的关键词，默认“排队”。")
+    parser.add_argument(
+        "-k",
+        "--keyword",
+        default="排队",
+        help="触发排队的关键词，支持换行、逗号、分号或竖线分隔多个关键词；默认“排队”。",
+    )
     parser.add_argument("--allow-repeat", action="store_true", help="允许同一用户重复排队。")
     parser.add_argument(
         "--cookie",

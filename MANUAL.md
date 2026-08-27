@@ -13,7 +13,7 @@
 ```json
 {
   "room": "11113452",
-  "keyword": "排",
+  "keyword": "排队\n上车",
   "eligibility_mode": "historical",
   "required_guard_level": 3,
   "allow_repeat": false,
@@ -22,7 +22,7 @@
 ```
 
 - `room`：直播间号
-- `keyword`：入队关键词
+- `keyword`：入队关键词，支持多行或逗号分隔
 - `eligibility_mode`：`historical` / `current` / `all`
 - `required_guard_level`：`3=舰长`，`2=提督`，`1=总督`
 - `allow_repeat`：是否允许重复排队

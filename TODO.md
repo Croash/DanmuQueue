@@ -18,6 +18,11 @@
 1. Name
 2. Name
 ```
+- [x] Make overlay queue text pure white with a transparent background.
+
+## Queue Rules
+
+- [x] Support multiple keywords for queue matching.
 
 ## Queue Management
 
@@ -26,6 +31,8 @@
 - [x] Poll recent danmaku history during disconnect/reconnect gaps as a best-effort fallback.
 - Add an operator page that only shows queued people.
 - Support marking a queued person as completed/done from that page.
+- Support manually deleting an individual queue record.
+- Support manually adding a captain directly into the queue.
 
 ## Export
 
@@ -36,3 +43,7 @@
 1. Name 3-2
 2. Name
 ```
+
+## Packaging
+
+- Support a Windows windowed build where closing the window exits the process cleanly.

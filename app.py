@@ -40,6 +40,8 @@ from danmu_queue import (
     get_danmu_history,
     get_danmu_info,
     http_headers,
+    keyword_matches,
+    normalize_keyword_text,
     iter_packets,
     local_now,
     normalize_unix_timestamp,
@@ -88,7 +90,7 @@ def normalize_settings(raw: dict[str, Any]) -> dict[str, Any]:
     settings.update(raw)
 
     settings["room"] = str(settings.get("room") or "").strip()
-    settings["keyword"] = str(settings.get("keyword") or "排队").strip() or "排队"
+    settings["keyword"] = normalize_keyword_text(settings.get("keyword")) or "排队"
 
     mode = str(settings.get("eligibility_mode") or "historical")
     settings["eligibility_mode"] = mode if mode in ELIGIBILITY_MODES else "historical"
@@ -391,7 +393,7 @@ class QueueStore:
         return row is not None
 
     def enqueue_if_allowed(self, danmu: DanmuMessage, settings: dict[str, Any]) -> tuple[bool, int | None, str]:
-        if settings["keyword"] not in danmu.message:
+        if not keyword_matches(danmu.message, settings["keyword"]):
             return False, None, "keyword_miss"
 
         mode = settings["eligibility_mode"]

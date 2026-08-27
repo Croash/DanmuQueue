@@ -23,8 +23,10 @@ from danmu_queue import (
     extract_history_danmu,
     history_danmu_key,
     iter_packets,
+    keyword_matches,
     normalize_unix_timestamp,
     parse_cookie,
+    split_keywords,
     sign_wbi_params,
 )
 from app import LocalDanmuQueueApp, QueueStore, parse_danmu_time
@@ -148,6 +150,12 @@ class DanmuQueueTests(unittest.TestCase):
             self.assertEqual(rows[0]["uid"], "123456")
             self.assertEqual(rows[0]["message"], "我要排队")
 
+    def test_multiple_keywords_match_any_separator(self) -> None:
+        self.assertEqual(split_keywords("排队,上车\n开播；上船|排队"), ["排队", "上车", "开播", "上船"])
+        self.assertTrue(keyword_matches("我要上车", "排队,上车"))
+        self.assertTrue(keyword_matches("我来开播", ["排队", "开播"]))
+        self.assertFalse(keyword_matches("只是路过", "排队,上车"))
+
     def test_store_allows_historical_guard_members(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = QueueStore(Path(tmpdir) / "queue.db")
@@ -165,6 +173,20 @@ class DanmuQueueTests(unittest.TestCase):
             store.upsert_guard(123456, "测试用户", 3, "guard_buy")
             self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
             self.assertEqual(store.enqueue_if_allowed(danmu, settings), (False, None, "duplicate"))
+
+    def test_store_matches_any_of_multiple_keywords(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = QueueStore(Path(tmpdir) / "queue.db")
+            settings = store.update_settings(
+                {
+                    "keyword": "排队,上车",
+                    "eligibility_mode": "all",
+                    "allow_repeat": False,
+                }
+            )
+            danmu = DanmuMessage(123456, "测试用户", "我要上车", None, 0)
+
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
 
     def test_historical_mode_ignores_required_guard_level(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

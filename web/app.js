@@ -78,6 +78,22 @@ function hydrateSettings(settings) {
   hydrated = true;
 }
 
+function splitKeywords(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => splitKeywords(item));
+  }
+  return String(value ?? "")
+    .replace(/\r/g, "\n")
+    .split(/[\n,，;；|]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatKeywords(value) {
+  const keywords = splitKeywords(value);
+  return keywords.length ? keywords.join("、") : "排队";
+}
+
 function renderStatus(status) {
   els.statusPill.classList.toggle("connected", Boolean(status.connected));
   els.statusPill.classList.toggle("running", Boolean(status.running && !status.connected));
@@ -103,7 +119,7 @@ function renderMetrics(state) {
   const settings = state.settings;
   const mode = modeLabels[settings.eligibility_mode] || "曾经上过舰";
   const guard = settings.eligibility_mode === "all" ? "全部" : guardLabels[settings.required_guard_level];
-  const keyword = settings.keyword || "排队";
+  const keyword = formatKeywords(settings.keyword);
   const eligibility = settings.eligibility_mode === "current" ? `${mode} / ${guard}` : mode;
   els.ruleText.textContent = `${keyword} / ${eligibility}`;
 }
