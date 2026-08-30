@@ -71,6 +71,7 @@ function hydrateSettings(settings) {
   if (hydrated) return;
   els.roomInput.value = settings.room || "";
   els.keywordInput.value = settings.keyword || "排队";
+  els.cookieInput.value = settings.cookie || "";
   els.modeSelect.value = settings.eligibility_mode || "historical";
   els.guardSelect.value = String(settings.required_guard_level || 3);
   els.repeatInput.checked = Boolean(settings.allow_repeat);
@@ -217,7 +218,10 @@ function escapeHtml(value) {
 async function refresh() {
   try {
     const state = await api("/api/state");
-    hydrateSettings(state.settings);
+    hydrateSettings({
+      ...state.settings,
+      cookie: state.cookie || "",
+    });
     renderStatus(state.status);
     renderMetrics(state);
     renderQueue(state.queue);

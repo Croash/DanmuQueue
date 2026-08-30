@@ -631,6 +631,7 @@ class LocalDanmuQueueApp:
             status = asdict(self.status)
         state = {
             "settings": self.store.get_settings(),
+            "cookie": self.get_cookie() or "",
             "status": status,
             "counts": self.store.counts(),
             "queue": self.store.list_queue(),
