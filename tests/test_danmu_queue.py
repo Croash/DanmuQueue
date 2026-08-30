@@ -188,6 +188,23 @@ class DanmuQueueTests(unittest.TestCase):
 
             self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
 
+    def test_queue_row_shows_former_captain_label_when_no_current_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = QueueStore(Path(tmpdir) / "queue.db")
+            settings = store.update_settings(
+                {
+                    "keyword": "排队",
+                    "eligibility_mode": "historical",
+                    "required_guard_level": 3,
+                    "allow_repeat": False,
+                }
+            )
+            danmu = DanmuMessage(123456, "测试用户", "我要排队", None, 0)
+
+            store.upsert_guard(123456, "测试用户", 3, "former_captain_medal")
+            self.assertEqual(store.enqueue_if_allowed(danmu, settings), (True, 1, "queued"))
+            self.assertEqual(store.list_queue(limit=1)[0]["guard_name"], "曾在舰")
+
     def test_historical_mode_ignores_required_guard_level(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = QueueStore(Path(tmpdir) / "queue.db")

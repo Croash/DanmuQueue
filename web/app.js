@@ -174,6 +174,10 @@ function renderGuards(rows) {
 }
 
 function renderLogs(rows) {
+  const stickToBottom = isNearBottom(els.logList);
+  const previousScrollTop = els.logList.scrollTop;
+  const previousScrollHeight = els.logList.scrollHeight;
+
   if (!rows.length) {
     els.logList.innerHTML = `<div class="log-item"><strong>暂无日志</strong><span></span></div>`;
     return;
@@ -189,7 +193,18 @@ function renderLogs(rows) {
       `,
     )
     .join("");
-  els.logList.scrollTop = els.logList.scrollHeight;
+
+  if (stickToBottom) {
+    els.logList.scrollTop = els.logList.scrollHeight;
+    return;
+  }
+
+  const heightDelta = els.logList.scrollHeight - previousScrollHeight;
+  els.logList.scrollTop = Math.max(0, previousScrollTop + heightDelta);
+}
+
+function isNearBottom(element, threshold = 24) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
 }
 
 function shortTime(value) {

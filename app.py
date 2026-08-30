@@ -605,10 +605,14 @@ class QueueStore:
             writer.writerow({key: row.get(key, "") for key in fieldnames})
         return output.getvalue()
 
-    @staticmethod
-    def _row_with_guard_name(row: sqlite3.Row) -> dict[str, Any]:
+    def _row_with_guard_name(self, row: sqlite3.Row) -> dict[str, Any]:
         item = dict(row)
-        item["guard_name"] = guard_name(row["guard_level"])
+        guard_level = safe_int(row["guard_level"], default=0) or 0
+        if guard_level > 0:
+            item["guard_name"] = guard_name(guard_level)
+        else:
+            uid = safe_int(item.get("uid"), default=0) or 0
+            item["guard_name"] = "曾在舰" if self.has_guard_record(uid) else "无"
         return item
 
 
